@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
 
         if (strlen(date_params) > 0)
         {
-          strcat(date_command, "\"+");
+          strcat(date_command, "+\"");
           strcat(date_command, date_params);
           strcat(date_command, "\"");
         }
