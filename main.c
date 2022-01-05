@@ -4,10 +4,61 @@
 #include <sys/socket.h>
 #include <arpa/inet.h> // for inet_addr
 #include <unistd.h>    // for write
+#include <ctype.h>
 
-char *trimwhitespace(char *str);
+size_t trimwhitespace(char *out, size_t len, const char *str);
+int containsValidParam(char *str);
 
 char *GET_DATE = "GET_DATE";
+
+char VALID_PARAMS[43][3] = {
+    "\%%", // a literal %
+    "\%a", // locale's abbreviated weekday name (e.g., Sun)
+    "\%A", // locale's full weekday name (e.g., Sunday)
+    "\%b", // locale's abbreviated month name (e.g., Jan)
+    "\%B", // locale's full month name (e.g., January)
+    "\%c", // locale's date and time (e.g., Thu Mar  3 23:05:25 2005)
+    "\%C", // century; like %Y, except omit last two digits (e.g., 20)
+    "\%d", // day of month (e.g., 01)
+    "\%D", // date; same as %m/%d/%y
+    "\%e", // day of month, space padded; same as %_d
+    "\%F", // full date; like %+4Y-%m-%d
+    "\%g", // last two digits of year of ISO week number (see %G)
+    "\%G", // year of ISO week number (see %V); normally useful only
+           // with %V
+    "\%h", // same as %b
+    "\%H", // hour (00..23)
+    "\%I", // hour (01..12)
+    "\%j", // day of year (001..366)
+    "\%k", // hour, space padded ( 0..23); same as %_H
+    "\%l", // hour, space padded ( 1..12); same as %_I
+    "\%m", // month (01..12)
+    "\%M", // minute (00..59)
+    "\%n", // a newline
+    "\%N", // nanoseconds (000000000..999999999)
+    "\%p", // locale's equivalent of either AM or PM; blank if not known
+    "\%P", // like %p, but lower case
+    "\%q", // quarter of year (1..4)
+    "\%r", // locale's 12-hour clock time (e.g., 11:11:04 PM)
+    "\%R", // 24-hour hour and minute; same as %H:%M
+    "\%s", // seconds since 1970-01-01 00:00:00 UTC
+    "\%S", // second (00..60)
+    "\%t", // a tab
+    "\%T", // time; same as %H:%M:%S
+    "\%u", // day of week (1..7); 1 is Monday
+    "\%U", // week number of year, with Sunday as first day of week
+           // (00..53)
+    "\%V", // ISO week number, with Monday as first day of week (01..53)
+    "\%w", // day of week (0..6); 0 is Sunday
+    "\%W", // week number of year, with Monday as first day of week
+           // (00..53)
+    "\%x", // locale's date representation (e.g., 12/31/99)
+    "\%X", // locale's time representation (e.g., 23:13:48)
+    "\%y", // last two digits of year (00..99)
+    "\%Y", // year
+    "\%z", // +hhmm numeric time zone (e.g., -0400)
+    "\%Z"  // alphabetic time zone abbreviation (e.g., EDT)
+};
 
 int main(int argc, char *argv[])
 {
@@ -48,7 +99,12 @@ int main(int argc, char *argv[])
   puts("Waiting for incoming connections...");
 
   char *welcome_message = "\nWelcome to the date server!!\n";
-  char *usage_message = "Usage:\n\tGET_DATE - invoke 'date' command on the server\n\thelp - show usage message\n\tclose - shut down the server\n\texit - disconnect from the server\n";
+  char *usage_message = "Usage:\n"
+                        "\tGET_DATE - invoke 'date' command on the server\n"
+                        "\t           only format arguments are supported\n"
+                        "\thelp     - show usage message\n"
+                        "\tclose    - shut down the server\n"
+                        "\texit     - disconnect from the server\n";
   char *prompt_message = "▶ ";
 
   c = sizeof(struct sockaddr_in);
@@ -66,20 +122,23 @@ int main(int argc, char *argv[])
     //Receive a message from client
     while ((read_size = recv(new_socket, client_message, MSG_LEN, 0)) > 0)
     {
-      char *message = client_message;
+      char message[read_size];
+      strcpy(message, client_message);
       message[strcspn(message, "\r\n")] = 0; // Remove newline character
 
       char command[strlen(GET_DATE) + 1];              // +1 for null terminator
       strncpy(command, &message[0], strlen(GET_DATE)); // Copy command to buffer
       command[strlen(GET_DATE)] = '\0';                // Null terminate string
 
-      if (strcmp(command, GET_DATE) == 0) // If the command is GET_DATE
+      if (strcmp(command, GET_DATE) == 0 && containsValidParam(message)) // If the command is GET_DATE
       {
         char date_params[200];                  // Buffer for date command parameters
         if (strlen(message) > strlen(GET_DATE)) // If there are parameters
         {
-          strncpy(date_params, &message[strlen(GET_DATE) + 1], strlen(message) - strlen(GET_DATE));
-          date_params[strlen(message) - strlen(GET_DATE)] = '\0';
+          char non_trimmed_params[strlen(message) - strlen(GET_DATE)]; // Buffer for non-trimmed parameters
+          strncpy(non_trimmed_params, &message[strlen(GET_DATE) + 1], strlen(message) - strlen(GET_DATE));
+          non_trimmed_params[strlen(message) - strlen(GET_DATE)] = '\0'; // Null terminate string
+          trimwhitespace(date_params, 200, non_trimmed_params);
         }
         else // If there are no parameters
         {
@@ -147,7 +206,7 @@ int main(int argc, char *argv[])
       }
       else // Other commands are considered incorrect
       {
-        char *help_message = "Incorrect input. Type 'help' to see usage.\n";
+        char *help_message = "INCORRECT REQUEST. Type 'help' to see usage.\n";
         write(new_socket, help_message, strlen(help_message));
       }
 
@@ -162,6 +221,56 @@ int main(int argc, char *argv[])
   }
 
   close(socket_fd); // Close the socket file descriptor, if not closed the socket is left hanging until OS cleans up
+
+  return 0;
+}
+
+// Return a pointer to the (shifted) trimmed string
+// Taken from: https://stackoverflow.com/a/122721
+size_t trimwhitespace(char *out, size_t len, const char *str)
+{
+  if (len == 0)
+    return 0;
+
+  const char *end;
+  size_t out_size;
+
+  // Trim leading space
+  while (isspace((unsigned char)*str))
+    str++;
+
+  if (*str == 0) // All spaces?
+  {
+    *out = 0;
+    return 1;
+  }
+
+  // Trim trailing space
+  end = str + strlen(str) - 1;
+  while (end > str && isspace((unsigned char)*end))
+    end--;
+  end++;
+
+  // Set output size to minimum of trimmed string length and buffer size minus 1
+  out_size = (end - str) < len - 1 ? (end - str) : len - 1;
+
+  // Copy trimmed string and add null terminator
+  memcpy(out, str, out_size);
+  out[out_size] = 0;
+
+  return out_size;
+}
+
+int containsValidParam(char *str)
+{
+  // check if the given string contains a valid parameter that is in the VALID_PARAMS array
+  for (int i = 0; i < sizeof(VALID_PARAMS) / sizeof(VALID_PARAMS[0]); i++)
+  {
+    if (strstr(str, VALID_PARAMS[i]) != NULL)
+    {
+      return 1;
+    }
+  }
 
   return 0;
 }
