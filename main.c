@@ -7,7 +7,8 @@
 #include <ctype.h>
 
 size_t trimwhitespace(char *out, size_t len, const char *str);
-int containsValidParam(char *str);
+int containsValidParams(char *str);
+int containsValidParamChar(char *character);
 
 char *GET_DATE = "GET_DATE";
 
@@ -77,22 +78,22 @@ int main(int argc, char *argv[])
   }
 
   int true = 1;
-  setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &true, sizeof(int));
+  setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &true, sizeof(int)); // Necessary for server to shutdown properly
 
-  uint16_t port = 5555;
+  uint16_t PORT = 5555;
 
   // Prepare the sockaddr_in structure
   server.sin_family = AF_INET;
   server.sin_addr.s_addr = INADDR_ANY;
-  server.sin_port = htons(port);
+  server.sin_port = htons(PORT);
 
   // Bind
   if (bind(socket_fd, (struct sockaddr *)&server, sizeof(server)) < 0)
   {
-    printf("Bind failed on port: %d\n", port);
+    printf("Bind failed on port: %d\n", PORT);
     return 1;
   }
-  printf("Socket binded on: %d\n", port);
+  printf("Socket binded on: %d\n", PORT);
 
   // Listen
   listen(socket_fd, 3);
@@ -130,7 +131,7 @@ int main(int argc, char *argv[])
       strncpy(command, &message[0], strlen(GET_DATE)); // Copy command to buffer
       command[strlen(GET_DATE)] = '\0';                // Null terminate string
 
-      if (strcmp(command, GET_DATE) == 0 && containsValidParam(message)) // If the command is GET_DATE
+      if (strcmp(command, GET_DATE) == 0 && containsValidParams(message)) // If the command is GET_DATE
       {
         char date_params[200];                  // Buffer for date command parameters
         if (strlen(message) > strlen(GET_DATE)) // If there are parameters
@@ -261,16 +262,54 @@ size_t trimwhitespace(char *out, size_t len, const char *str)
   return out_size;
 }
 
-int containsValidParam(char *str)
+// Check if the character equals any of the valid params character part excluding the '%' part of the valid parameter
+int containsValidParamChar(char *character)
 {
-  // check if the given string contains a valid parameter that is in the VALID_PARAMS array
   for (int i = 0; i < sizeof(VALID_PARAMS) / sizeof(VALID_PARAMS[0]); i++)
   {
-    if (strstr(str, VALID_PARAMS[i]) != NULL)
+    if (character[0] == VALID_PARAMS[i][1])
     {
       return 1;
     }
   }
 
   return 0;
+}
+
+/*
+Write a function which takes a string as parameter and
+checks if all % signs are followed by a valid parameter character.
+If not all % signs are followed by a valid parameter character,
+the function returns 0.
+If all % signs are followed by a valid parameter character,
+the function returns 1.
+*/
+int containsValidParams(char *str)
+{
+  int containsPercentSign = 0;
+  // check if the given string contains a valid parameter character
+  for (int i = 0; i < strlen(str); i++)
+  {
+    if (str[i] == '%')
+    {
+      containsPercentSign = 1;
+      if (i + 1 < strlen(str))
+      {
+        if (containsValidParamChar(&str[i + 1]) == 0)
+        {
+          return 0;
+        }
+        if (str[i + 1] == '%')
+        {
+          i++;
+        }
+      }
+      else
+      {
+        return 0;
+      }
+    }
+  }
+
+  return containsPercentSign;
 }
